@@ -419,8 +419,7 @@ def _expand_defaults_list_impl(
         if d.config_group is not None:
             fqgn = d.fully_qualified_group_name()
             if fqgn not in seen_groups:
-                if not d.is_deleted:
-                    seen_groups.add(fqgn)
+                seen_groups.add(fqgn)
                 deduped.append(d)
         else:
             deduped.append(d)

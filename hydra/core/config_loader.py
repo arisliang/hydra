@@ -13,10 +13,14 @@ from hydra.types import RunMode
 
 @dataclass
 class LoadTrace:
-    filename: str
-    path: Optional[str]
-    provider: Optional[str]
+    config_group: Optional[str] = None
+    config_name: Optional[str] = None
+    package: Optional[str] = None
+    parent: Optional[str] = None
+    search_path: Optional[str] = None
+    provider: Optional[str] = None
     schema_provider: Optional[str] = None
+    skip_reason: Optional[str] = None
 
 
 class ConfigLoader(ABC):
@@ -43,10 +47,6 @@ class ConfigLoader(ABC):
 
     @abstractmethod
     def get_search_path(self) -> ConfigSearchPath:
-        ...
-
-    @abstractmethod
-    def get_load_history(self) -> List[LoadTrace]:
         ...
 
     @abstractmethod

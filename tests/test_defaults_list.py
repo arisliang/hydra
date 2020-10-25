@@ -425,11 +425,6 @@ Plugins.instance()
                     skip_load_reason="deleted_from_list",
                     parent="delete/d6",
                 ),
-                DefaultElement(
-                    config_group="b",
-                    config_name="b3",
-                    parent="delete/d6",
-                ),
             ],
             id="specific_delete",
         ),
@@ -1133,35 +1128,48 @@ def test_expand_defaults_list(
             id="delete_after_set_from_overrides",
         ),
         pytest.param(
-            "test_overrides",
-            ["a=foo", "~a"],
+            "a/a2",
+            ["b=b2"],
             [
-                DefaultElement(config_name="test_overrides", parent="this_test"),
+                DefaultElement(config_name="a/a2", parent="this_test"),
+                DefaultElement(config_group="b", config_name="b2", parent="a/a2"),
+                DefaultElement(config_group="c", config_name="c2", parent="b/b2"),
+            ],
+            id="delete_after_set_from_overrides:baseline",
+        ),
+        pytest.param(
+            "a/a2",
+            ["b=b2", "~b"],
+            [
+                DefaultElement(config_name="a/a2", parent="this_test"),
                 DefaultElement(
-                    config_group="a",
-                    config_name="a1",
+                    config_group="b",
+                    config_name="b1",
+                    parent="a/a2",
                     is_deleted=True,
                     skip_load=True,
                     skip_load_reason="deleted_from_list",
-                    parent="test_overrides",
+                ),
+            ],
+            id="delete_after_set_from_overrides",
+        ),
+        pytest.param(
+            "a/a2",
+            ["b=b2", "~c"],
+            [
+                DefaultElement(config_name="a/a2", parent="this_test"),
+                DefaultElement(
+                    config_group="b",
+                    config_name="b2",
+                    parent="a/a2",
                 ),
                 DefaultElement(
-                    config_group="a",
-                    package="pkg",
-                    config_name="a1",
-                    parent="test_overrides",
-                ),
-                DefaultElement(
-                    config_group="c", config_name="c1", parent="test_overrides"
-                ),
-                DefaultElement(
-                    config_group="a",
-                    config_name="foo",
+                    config_group="c",
+                    config_name="c2",
+                    parent="b/b2",
                     is_deleted=True,
                     skip_load=True,
                     skip_load_reason="deleted_from_list",
-                    from_override=True,
-                    parent="overrides",
                 ),
             ],
             id="delete_after_set_from_overrides",
@@ -1174,6 +1182,15 @@ def test_expand_defaults_list(
                 DefaultElement(config_group="b", config_name="b1", parent="delete/d10"),
             ],
             id="override_deletion",
+        ),
+        pytest.param(
+            "delete/d10",
+            ["b=b1"],
+            [
+                DefaultElement(config_name="delete/d10", parent="this_test"),
+                DefaultElement(config_group="b", config_name="b1", parent="delete/d10"),
+            ],
+            id="delete_overriden_2",
         ),
         # syntax error
         pytest.param(

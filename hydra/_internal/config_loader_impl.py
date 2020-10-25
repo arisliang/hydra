@@ -2,14 +2,13 @@
 """
 Configuration loader
 """
-import copy
 import os
 import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from textwrap import dedent
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from omegaconf import DictConfig, OmegaConf, open_dict
 from omegaconf.errors import (
@@ -45,9 +44,6 @@ class SplitOverrides:
     config_overrides: List[Override]
 
 
-# TODO: clean up record load crap
-
-
 class ConfigLoaderImpl(ConfigLoader):
     """
     Configuration loader
@@ -59,7 +55,6 @@ class ConfigLoaderImpl(ConfigLoader):
         default_strict: Optional[bool] = True,
     ) -> None:
         self.default_strict = default_strict
-        self.all_config_checked: List[LoadTrace] = []
         self.config_search_path = config_search_path
         self.repository: ConfigRepository = ConfigRepository(
             config_search_path=config_search_path
@@ -219,14 +214,10 @@ class ConfigLoaderImpl(ConfigLoader):
         config_group_overrides = split_res.config_group_overrides
         config_overrides = split_res.config_overrides
 
-        input_defaults = [DefaultElement(config_name="hydra_config", parent=None)]
+        input_defaults = [DefaultElement(config_name="hydra_config")]
 
         if config_name is not None:
-            input_defaults.append(
-                DefaultElement(
-                    config_name=config_name, primary=True, parent="primary-config"
-                )
-            )
+            input_defaults.append(DefaultElement(config_name=config_name, primary=True))
 
         for default in convert_overrides_to_defaults(config_group_overrides):
             input_defaults.append(default)
@@ -238,7 +229,7 @@ class ConfigLoaderImpl(ConfigLoader):
             repo=caching_repo,
         )
 
-        cfg = self._compose_config_from_defaults_list(
+        cfg, composition_trace = self._compose_config_from_defaults_list(
             defaults=defaults, repo=caching_repo
         )
 
@@ -261,7 +252,7 @@ class ConfigLoaderImpl(ConfigLoader):
             cfg.hydra.runtime.version = __version__
             cfg.hydra.runtime.cwd = os.getcwd()
 
-            cfg.hydra.composition_trace = self.convert_to_composition_trace(defaults)
+            cfg.hydra.composition_trace = composition_trace
             if "name" not in cfg.hydra.job:
                 cfg.hydra.job.name = JobRuntime().get("name")
             cfg.hydra.job.override_dirname = get_overrides_dirname(
@@ -306,13 +297,6 @@ class ConfigLoaderImpl(ConfigLoader):
 
     def get_search_path(self) -> ConfigSearchPath:
         return self.config_search_path
-
-    def get_load_history(self) -> List[LoadTrace]:
-        """
-        returns the load history (which configs were attempted to load, and if they
-        were loaded successfully or not.
-        """
-        return copy.deepcopy(self.all_config_checked)
 
     @staticmethod
     def _apply_overrides_to_config(overrides: List[Override], cfg: DictConfig) -> None:
@@ -369,31 +353,11 @@ class ConfigLoaderImpl(ConfigLoader):
                     f"Error merging override {override.input_line}"
                 ) from ex
 
-    def _record_loading(
-        self,
-        name: str,
-        path: Optional[str],
-        provider: Optional[str],
-        schema_provider: Optional[str],
-        record_load: bool,
-    ) -> Optional[LoadTrace]:
-        trace = LoadTrace(
-            filename=name,
-            path=path,
-            provider=provider,
-            schema_provider=schema_provider,
-        )
-
-        if record_load:
-            self.all_config_checked.append(trace)
-
-        return trace
-
     def _load_single_config(
         self,
         default: DefaultElement,
         repo: IConfigRepository,
-    ) -> Optional[ConfigResult]:
+    ) -> Tuple[ConfigResult, LoadTrace]:
         config_path = default.config_path()
         package_override = default.package
         ret = repo.load_config(
@@ -452,15 +416,16 @@ class ConfigLoaderImpl(ConfigLoader):
 
                 assert isinstance(merged, DictConfig)
 
-        self._record_loading(
-            name=config_path,
-            path=ret.path,
+        trace = LoadTrace(
+            config_group=default.config_group,
+            config_name=default.config_name,
+            package=default.get_subject_package(),
+            search_path=ret.path,
+            parent=default.parent,
             provider=ret.provider,
             schema_provider=schema_provider,
-            record_load=True,
-        ),
-
-        return ret
+        )
+        return ret, trace
 
     def list_groups(self, parent_name: str) -> List[str]:
         return self.get_group_options(
@@ -476,65 +441,34 @@ class ConfigLoaderImpl(ConfigLoader):
         self,
         defaults: List[DefaultElement],
         repo: IConfigRepository,
-    ) -> DictConfig:
+    ) -> Tuple[DictConfig, List[LoadTrace]]:
+        composition_trace = []
         cfg = OmegaConf.create()
         for default in defaults:
             if default.skip_load:
-                # record optional missing
-                if default.optional:
-                    self._record_loading(
-                        name=default.config_path(),
-                        path=None,
-                        provider=None,
-                        schema_provider=None,
-                        record_load=True,
-                    ),
-
-                continue
-            loaded = self._load_single_config(default=default, repo=repo)
-            # should not happen, generation of defaults list already verified that this exists
-            assert loaded is not None
-            merged = OmegaConf.merge(cfg, loaded.config)
-            assert isinstance(merged, DictConfig)
-            cfg = merged
-            assert cfg is not None
+                trace = LoadTrace(
+                    config_group=default.config_group,
+                    config_name=default.config_name,
+                    package=default.get_subject_package(),
+                    parent=default.parent,
+                    skip_reason=default.skip_load_reason,
+                )
+            else:
+                loaded, trace = self._load_single_config(default=default, repo=repo)
+                # should not happen, generation of defaults list already verified that this exists
+                merged = OmegaConf.merge(cfg, loaded.config)
+                assert isinstance(merged, DictConfig)
+                cfg = merged
+                assert cfg is not None
+            composition_trace.append(trace)
 
         # This is primarily cosmetic
         cfg._metadata.ref_type = cfg._metadata.object_type
 
-        return cfg
+        return cfg, composition_trace
 
     def get_sources(self) -> List[ConfigSource]:
         return self.repository.get_sources()
-
-    @staticmethod
-    def convert_to_composition_trace(
-        defaults: List[DefaultElement],
-    ) -> List[Dict[str, str]]:
-        ret = []
-        for d in defaults:
-
-            cde = {}
-
-            if d.config_group is not None:
-                cde["config_group"] = d.config_group
-
-            cde["config_name"] = d.config_name
-
-            if d.parent is not None:
-                cde["parent"] = d.parent
-
-            package = d.get_subject_package()
-            if package is not None:
-                cde["package"] = package
-
-            if d.skip_load:
-                cde["skip_reason"] = d.skip_load_reason
-            else:
-                cde["search_path"] = d.search_path
-
-            ret.append(cde)
-        return ret
 
 
 def get_overrides_dirname(

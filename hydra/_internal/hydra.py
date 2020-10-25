@@ -11,7 +11,7 @@ from typing import Any, Callable, DefaultDict, List, Optional, Sequence, Type
 from omegaconf import Container, DictConfig, OmegaConf, open_dict
 
 from hydra._internal.utils import get_column_widths, run_and_report
-from hydra.core.config_loader import ConfigLoader
+from hydra.core.config_loader import ConfigLoader, LoadTrace
 from hydra.core.config_search_path import ConfigSearchPath
 from hydra.core.hydra_config import HydraConfig
 from hydra.core.plugins import Plugins
@@ -400,19 +400,27 @@ class Hydra:
             )
         self._log_footer(header=header, filler="-")
 
-    def _print_composition_trace(self) -> None:
+    def _print_composition_trace(self, cfg: DictConfig) -> None:
         # Print configurations used to compose the config object
         assert log is not None
         log.debug("")
         self._log_header("Composition trace", filler="*")
         box: List[List[str]] = [
-            ["Config name", "Search path", "Provider", "Schema provider"]
+            [
+                "Config group",
+                "Config name",
+                "Search path",
+                "Provider",
+                "Schema provider",
+            ]
         ]
-        for trace in self.config_loader.get_load_history():
+        composition_trace = [LoadTrace(**x) for x in cfg.hydra.composition_trace]
+        for trace in composition_trace:
             box.append(
                 [
-                    trace.filename,
-                    trace.path if trace.path is not None else "",
+                    trace.config_group if trace.config_group is not None else "",
+                    trace.config_name if trace.config_name is not None else "",
+                    trace.search_path if trace.search_path is not None else "",
                     trace.provider if trace.provider is not None else "",
                     trace.schema_provider if trace.schema_provider is not None else "",
                 ]
@@ -420,21 +428,23 @@ class Hydra:
         padding = get_column_widths(box)
         del box[0]
 
-        header = "| {} | {} | {} | {} |".format(
-            "Config name".ljust(padding[0]),
-            "Search path".ljust(padding[1]),
-            "Provider".ljust(padding[2]),
-            "Schema provider".ljust(padding[3]),
+        header = "| {} | {} | {} | {} | {} |".format(
+            "Config group".ljust(padding[0]),
+            "Config name".ljust(padding[1]),
+            "Search path".ljust(padding[2]),
+            "Provider".ljust(padding[3]),
+            "Schema provider".ljust(padding[4]),
         )
         self._log_header(header=header, filler="-")
 
         for row in box:
             log.debug(
-                "| {} | {} | {} | {} |".format(
+                "| {} | {} | {} | {} | {} |".format(
                     row[0].ljust(padding[0]),
                     row[1].ljust(padding[1]),
                     row[2].ljust(padding[2]),
                     row[3].ljust(padding[3]),
+                    row[4].ljust(padding[4]),
                 )
             )
 
@@ -476,12 +486,12 @@ class Hydra:
 
         self._log_footer(header=header, filler="-")
 
-    def _print_debug_info(self) -> None:
+    def _print_debug_info(self, cfg: DictConfig) -> None:
         assert log is not None
         if log.isEnabledFor(logging.DEBUG):
             self._print_plugins()
             self._print_search_path()
-            self._print_composition_trace()
+            self._print_composition_trace(cfg)
             self._print_plugins_profiling_info(10)
 
     def compose_config(
@@ -515,7 +525,7 @@ class Hydra:
             configure_log(cfg.hydra.hydra_logging, cfg.hydra.verbose)
             global log
             log = logging.getLogger(__name__)
-            self._print_debug_info()
+            self._print_debug_info(cfg)
         return cfg
 
     def show_info(self, config_name: Optional[str], overrides: List[str]) -> None:
@@ -533,12 +543,14 @@ class Hydra:
             lambda: self._get_cfg(
                 config_name=config_name,
                 overrides=overrides,
-                cfg_type="job",
+                cfg_type="all",
                 with_log_configuration=False,
             )
         )
-        self._print_composition_trace()
+        self._print_composition_trace(cfg)
 
         log.debug("\n")
         self._log_header(header="Config", filler="*")
+        with open_dict(cfg):
+            del cfg["hydra"]
         print(OmegaConf.to_yaml(cfg))
